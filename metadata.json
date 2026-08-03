@@ -1,0 +1,6 @@
+{
+  "name": "Headless CMS Artikel",
+  "description": "CMS Artikel Headless tanpa frontend dengan REST API, Embed PHP/JSON endpoints, Media Manager, SEO Engine, Flat File JSON database, dan Admin Panel modern.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
