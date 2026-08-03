@@ -11,7 +11,7 @@ import { ArticlePost, Category, Tag, StaticPage, SiteSettings, User, MediaFile }
 // Initialize default JSON data if not existing
 initSeedData();
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
 // Middleware
@@ -19,12 +19,19 @@ app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Set Security & Embed Headers
+// Set Security & Open Embed Headers for Iframe & External Cross-Origin requests
 app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   // Allow iframe embedding from any domain for Headless CMS Embeds
   res.setHeader('Content-Security-Policy', "frame-ancestors *;");
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
   next();
 });
 
@@ -887,3 +894,5 @@ async function start() {
 }
 
 start();
+
+export default app;

@@ -151,6 +151,18 @@ export const EmbedSandboxView: React.FC = () => {
 
         {/* Right Live Preview Frame */}
         <div className="lg:col-span-2 space-y-4">
+          <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 text-amber-900 dark:text-amber-200 text-xs space-y-1">
+            <div className="font-bold flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
+              <span>💡 Catatan Penting tentang Error 403 di Link Embed:</span>
+            </div>
+            <p className="leading-relaxed">
+              Jika Anda membuka link embed langsung di tab baru browser atau website eksternal dan muncul <strong>Error 403 (Forbidden)</strong>, hal tersebut dikarenakan URL Pratinjau Cloud Sandbox ini dilindungi oleh otentikasi AI Studio.
+            </p>
+            <p className="leading-relaxed">
+              <strong>Solusi:</strong> Gunakan kotak pratinjau Iframe di bawah ini (yang berjalan lancar di dalam aplikasi), atau <strong>Deploy/Export projek ke hosting PHP publik (cPanel/Vercel/VPS)</strong>. Pada server publik Anda nanti, semua endpoint embed dan file <code>.php</code> akan bisa diakses 100% terbuka tanpa pesan 403.
+            </p>
+          </div>
+
           <div className="p-4 rounded-2xl bg-slate-900 text-white flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-mono text-indigo-300">
               <Globe className="w-4 h-4 text-indigo-400" />
