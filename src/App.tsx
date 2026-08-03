@@ -187,6 +187,16 @@ export default function App() {
       const data = await res.json();
       if (res.ok) {
         addToast('success', isEdit ? 'Artikel berhasil diperbarui!' : 'Artikel baru berhasil dibuat!');
+        if (data.data) {
+          const savedArticle: ArticlePost = data.data;
+          setArticles(prev => {
+            const exists = prev.some(a => a.id === savedArticle.id);
+            if (exists) {
+              return prev.map(a => a.id === savedArticle.id ? savedArticle : a);
+            }
+            return [savedArticle, ...prev];
+          });
+        }
         fetchAllData();
         setCurrentTab('articles');
       } else {

@@ -744,17 +744,30 @@ const handleEmbedPosts = (req: Request, res: Response) => {
   let posts = DB.getPosts().filter(p => !p.is_deleted && p.status === 'publish');
 
   if (category) {
+    const catQuery = (category as string).toLowerCase().trim();
     const cats = DB.getCategories();
-    const targetCat = cats.find(c => c.slug === category || c.id === category || c.name === category);
+    const targetCat = cats.find(c => 
+      c.slug.toLowerCase() === catQuery || 
+      c.id.toLowerCase() === catQuery || 
+      c.name.toLowerCase() === catQuery
+    );
+    
     if (targetCat) {
-      posts = posts.filter(p => p.category_id === targetCat.id);
+      posts = posts.filter(p => 
+        p.category_id === targetCat.id || 
+        (p.category_name && p.category_name.toLowerCase() === targetCat.name.toLowerCase())
+      );
     } else {
-      posts = posts.filter(p => p.category_name === category || p.category_id === category);
+      posts = posts.filter(p => 
+        p.category_id === category || 
+        (p.category_name && p.category_name.toLowerCase() === catQuery)
+      );
     }
   }
 
   if (tag) {
-    posts = posts.filter(p => p.tags && p.tags.includes(tag as string));
+    const tagQuery = (tag as string).toLowerCase().trim();
+    posts = posts.filter(p => p.tags && p.tags.some(t => t.toLowerCase() === tagQuery));
   }
 
   if (q) {
@@ -778,26 +791,51 @@ const handleEmbedPosts = (req: Request, res: Response) => {
   // HTML format (default or explicitly requested)
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   let html = `<div class="cms-embed-container" style="font-family: system-ui, sans-serif; max-width: 100%; margin: 0 auto; box-sizing: border-box;">`;
-  html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">`;
-
-  posts.forEach(p => {
+  
+  if (posts.length === 0) {
     html += `
-      <div style="border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #ffffff; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-        ${p.featured_image ? `<img src="${p.featured_image}" alt="${p.title}" style="width:100%; height:160px; object-fit:cover;">` : ''}
-        <div style="padding: 16px;">
-          <span style="font-size: 11px; font-weight: 600; color: #3b82f6; text-transform: uppercase; letter-spacing: 0.5px;">${p.category_name || 'Berita'}</span>
-          <h3 style="margin: 6px 0 8px 0; font-size: 16px; line-height: 1.4;"><a href="/embed/article.php?id=${p.slug}" style="color: #0f172a; text-decoration: none;">${p.title}</a></h3>
-          <p style="font-size: 13px; color: #64748b; margin: 0 0 12px 0; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${p.summary}</p>
-          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 10px;">
-            <span>${p.author_name || 'Redaksi'}</span>
-            <span>${p.reading_time_minutes} min baca</span>
-          </div>
-        </div>
+      <div style="text-align: center; padding: 40px 20px; color: #64748b; background: #f8fafc; border-radius: 12px; border: 1px dashed #cbd5e1; margin: 8px 0;">
+        <svg style="width: 36px; height: 36px; margin: 0 auto 10px auto; color: #94a3b8; display: block;" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"></path>
+        </svg>
+        <p style="font-size: 15px; font-weight: 600; margin: 0 0 4px 0; color: #334155;">Artikel Belum Tersedia</p>
+        <p style="font-size: 13px; margin: 0; color: #64748b;">Belum ada artikel yang dipublikasikan untuk ${category ? `kategori "${category}"` : 'kriteria pencarian ini'}.</p>
       </div>
     `;
-  });
+  } else {
+    html += `<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">`;
 
-  html += `</div></div>`;
+    posts.forEach(p => {
+      html += `
+        <div style="border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; background: #ffffff; transition: transform 0.2s, box-shadow 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+          ${p.featured_image ? `<img src="${p.featured_image}" alt="${p.title}" style="width:100%; height:160px; object-fit:cover;">` : ''}
+          <div style="padding: 16px;">
+            <span style="font-size: 11px; font-weight: 600; color: #3b82f6; text-transform: uppercase; letter-spacing: 0.5px;">${p.category_name || 'Berita'}</span>
+            <h3 style="margin: 6px 0 8px 0; font-size: 16px; line-height: 1.4;"><a href="/embed/article.php?id=${p.slug}" target="_blank" style="color: #0f172a; text-decoration: none;">${p.title}</a></h3>
+            <p style="font-size: 13px; color: #64748b; margin: 0 0 12px 0; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">${p.summary}</p>
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; padding-top: 10px;">
+              <span>${p.author_name || 'Redaksi'}</span>
+              <span>${p.reading_time_minutes} min baca</span>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+  }
+
+  html += `<script>
+    function sendHeight() {
+      var height = document.body.scrollHeight;
+      window.parent.postMessage({ type: 'cms-embed-resize', height: height }, '*');
+    }
+    window.addEventListener('load', sendHeight);
+    window.addEventListener('resize', sendHeight);
+    setTimeout(sendHeight, 300);
+  </script>`;
+
+  html += `</div>`;
   return res.send(html);
 };
 
@@ -880,6 +918,15 @@ const handleEmbedArticle = (req: Request, res: Response) => {
         ${post.featured_image ? `<img class="hero" src="${post.featured_image}" alt="${post.title}" />` : ''}
         <div class="content">${post.content}</div>
       </article>
+      <script>
+        function sendHeight() {
+          var height = document.body.scrollHeight;
+          window.parent.postMessage({ type: 'cms-embed-resize', height: height }, '*');
+        }
+        window.addEventListener('load', sendHeight);
+        window.addEventListener('resize', sendHeight);
+        setTimeout(sendHeight, 300);
+      </script>
     </body>
     </html>
   `);

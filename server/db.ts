@@ -116,15 +116,23 @@ async function writeJSON<T>(filename: string, data: T): Promise<void> {
 
 let isHydrated = false;
 let hydratingPromise: Promise<void> | null = null;
+let lastHydratedAt = 0;
+const CACHE_TTL_MS = 2500; // 2.5 seconds cache TTL for serverless instance sync
 
-export async function ensureHydrated(): Promise<void> {
-  if (isHydrated) return;
+export async function ensureHydrated(force = false): Promise<void> {
+  const now = Date.now();
+  if (isHydrated && !force && (now - lastHydratedAt < CACHE_TTL_MS)) return;
+
   if (!hydratingPromise) {
     hydratingPromise = hydrateFromSupabase().then(() => {
       isHydrated = true;
+      lastHydratedAt = Date.now();
+      hydratingPromise = null;
     }).catch(err => {
       console.error('Failed to hydrate from Supabase:', err);
       isHydrated = true;
+      lastHydratedAt = Date.now();
+      hydratingPromise = null;
     });
   }
   await hydratingPromise;
