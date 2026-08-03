@@ -4,8 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import cors from 'cors';
 import multer from 'multer';
-import { createServer as createViteServer } from 'vite';
-import { DB, initSeedData, hydrateFromSupabase } from './server/db.js';
+import { DB, initSeedData, hydrateFromSupabase, ensureHydrated } from './server/db.js';
 import { getPHPProjectFiles } from './server/php_generator.js';
 import { ArticlePost, Category, Tag, StaticPage, SiteSettings, User, MediaFile } from './src/types.js';
 
@@ -21,6 +20,14 @@ const PORT = 3000;
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+
+// Ensure cache is hydrated from Supabase before serving API/embed requests on cold-starts
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api') || req.path.startsWith('/embed')) {
+    await ensureHydrated();
+  }
+  next();
+});
 
 // Set Security & Open Embed Headers for Iframe & External Cross-Origin requests
 app.use((req, res, next) => {
@@ -133,7 +140,10 @@ app.get('/api/supabase/status', async (req: Request, res: Response) => {
   key TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW()
-);`
+);
+
+-- Matikan Row Level Security (RLS) agar API Key Supabase dapat membaca & menulis data
+ALTER TABLE cms_store DISABLE ROW LEVEL SECURITY;`
       });
     }
 
@@ -155,12 +165,12 @@ app.get('/api/supabase/status', async (req: Request, res: Response) => {
 });
 
 // Auth Login Simulation
-app.post('/api/auth/login', (req: Request, res: Response) => {
+app.post('/api/auth/login', async (req: Request, res: Response) => {
   const { username, password } = req.body;
   const ip = req.ip || '127.0.0.1';
   
   if (!username || !password) {
-    DB.addLog('security', `Login gagal: Username/password kosong dari IP ${ip}`, username || 'Unknown', ip);
+    await DB.addLog('security', `Login gagal: Username/password kosong dari IP ${ip}`, username || 'Unknown', ip);
     return res.status(400).json({ error: 'Username dan password wajib diisi!' });
   }
 
@@ -169,8 +179,8 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
 
   if (foundUser && (password === 'admin123' || password === 'admin' || password === 'password')) {
     foundUser.last_login = new Date().toISOString();
-    DB.saveUsers(users);
-    DB.addLog('login', `Login berhasil untuk pengguna ${foundUser.username}`, foundUser.name, ip);
+    await DB.saveUsers(users);
+    await DB.addLog('login', `Login berhasil untuk pengguna ${foundUser.username}`, foundUser.name, ip);
 
     const settings = DB.getSettings();
     return res.json({
@@ -180,7 +190,7 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     });
   }
 
-  DB.addLog('security', `Percobaan login gagal untuk username: ${username} dari IP ${ip}`, username, ip);
+  await DB.addLog('security', `Percobaan login gagal untuk username: ${username} dari IP ${ip}`, username, ip);
   return res.status(401).json({ error: 'Username atau password salah! Gunakan admin / admin123' });
 });
 
@@ -270,7 +280,7 @@ app.get('/api/posts', (req: Request, res: Response) => {
 });
 
 // Get Single Post
-app.get('/api/posts/:id', (req: Request, res: Response) => {
+app.get('/api/posts/:id', async (req: Request, res: Response) => {
   const posts = DB.getPosts();
   const post = posts.find(p => p.id === req.params.id || p.slug === req.params.id);
 
@@ -280,13 +290,13 @@ app.get('/api/posts/:id', (req: Request, res: Response) => {
 
   // Increment view count
   post.views_count = (post.views_count || 0) + 1;
-  DB.savePosts(posts);
+  await DB.savePosts(posts);
 
   res.json({ data: post });
 });
 
 // Create Post
-app.post('/api/posts', (req: Request, res: Response) => {
+app.post('/api/posts', async (req: Request, res: Response) => {
   const posts = DB.getPosts();
   const input = req.body;
 
@@ -334,14 +344,14 @@ app.post('/api/posts', (req: Request, res: Response) => {
   };
 
   posts.unshift(newPost);
-  DB.savePosts(posts);
-  DB.addLog('activity', `Membuat artikel baru: "${newPost.title}"`, newPost.author_name);
+  await DB.savePosts(posts);
+  await DB.addLog('activity', `Membuat artikel baru: "${newPost.title}"`, newPost.author_name);
 
   res.status(201).json({ status: 'success', data: newPost });
 });
 
 // Update Post
-app.put('/api/posts/:id', (req: Request, res: Response) => {
+app.put('/api/posts/:id', async (req: Request, res: Response) => {
   const posts = DB.getPosts();
   const idx = posts.findIndex(p => p.id === req.params.id);
 
@@ -365,14 +375,14 @@ app.put('/api/posts/:id', (req: Request, res: Response) => {
   };
 
   posts[idx] = updated;
-  DB.savePosts(posts);
-  DB.addLog('activity', `Memperbarui artikel: "${updated.title}"`, updated.author_name);
+  await DB.savePosts(posts);
+  await DB.addLog('activity', `Memperbarui artikel: "${updated.title}"`, updated.author_name);
 
   res.json({ status: 'success', data: updated });
 });
 
 // Move to Trash or Permanent Delete
-app.delete('/api/posts/:id', (req: Request, res: Response) => {
+app.delete('/api/posts/:id', async (req: Request, res: Response) => {
   let posts = DB.getPosts();
   const post = posts.find(p => p.id === req.params.id);
 
@@ -384,20 +394,20 @@ app.delete('/api/posts/:id', (req: Request, res: Response) => {
 
   if (permanent) {
     posts = posts.filter(p => p.id !== req.params.id);
-    DB.savePosts(posts);
-    DB.addLog('activity', `Menghapus permanen artikel ID: ${req.params.id}`, 'Admin');
+    await DB.savePosts(posts);
+    await DB.addLog('activity', `Menghapus permanen artikel ID: ${req.params.id}`, 'Admin');
     return res.json({ status: 'success', message: 'Artikel berhasil dihapus permanen.' });
   } else {
     post.is_deleted = true;
     post.deleted_at = new Date().toISOString();
-    DB.savePosts(posts);
-    DB.addLog('activity', `Memindahkan artikel ke tempat sampah: "${post.title}"`, 'Admin');
+    await DB.savePosts(posts);
+    await DB.addLog('activity', `Memindahkan artikel ke tempat sampah: "${post.title}"`, 'Admin');
     return res.json({ status: 'success', message: 'Artikel dipindahkan ke Tempat Sampah.' });
   }
 });
 
 // Restore Post from Trash
-app.post('/api/posts/restore/:id', (req: Request, res: Response) => {
+app.post('/api/posts/restore/:id', async (req: Request, res: Response) => {
   const posts = DB.getPosts();
   const post = posts.find(p => p.id === req.params.id);
 
@@ -407,14 +417,14 @@ app.post('/api/posts/restore/:id', (req: Request, res: Response) => {
 
   post.is_deleted = false;
   post.deleted_at = undefined;
-  DB.savePosts(posts);
-  DB.addLog('activity', `Mengembalikan artikel dari tempat sampah: "${post.title}"`, 'Admin');
+  await DB.savePosts(posts);
+  await DB.addLog('activity', `Mengembalikan artikel dari tempat sampah: "${post.title}"`, 'Admin');
 
   res.json({ status: 'success', message: 'Artikel berhasil dipulihkan.' });
 });
 
 // Duplicate Post
-app.post('/api/posts/duplicate/:id', (req: Request, res: Response) => {
+app.post('/api/posts/duplicate/:id', async (req: Request, res: Response) => {
   const posts = DB.getPosts();
   const post = posts.find(p => p.id === req.params.id);
 
@@ -435,8 +445,8 @@ app.post('/api/posts/duplicate/:id', (req: Request, res: Response) => {
   };
 
   posts.unshift(duplicate);
-  DB.savePosts(posts);
-  DB.addLog('activity', `Menduplikasi artikel: "${post.title}"`, 'Admin');
+  await DB.savePosts(posts);
+  await DB.addLog('activity', `Menduplikasi artikel: "${post.title}"`, 'Admin');
 
   res.json({ status: 'success', data: duplicate });
 });
@@ -454,7 +464,7 @@ app.get('/api/categories', (req: Request, res: Response) => {
   res.json({ data: list });
 });
 
-app.post('/api/categories', (req: Request, res: Response) => {
+app.post('/api/categories', async (req: Request, res: Response) => {
   const categories = DB.getCategories();
   const { name, slug, description, parent_id, icon, meta_description } = req.body;
 
@@ -472,30 +482,30 @@ app.post('/api/categories', (req: Request, res: Response) => {
   };
 
   categories.push(newCat);
-  DB.saveCategories(categories);
-  DB.addLog('activity', `Menambah kategori baru: ${name}`, 'Admin');
+  await DB.saveCategories(categories);
+  await DB.addLog('activity', `Menambah kategori baru: ${name}`, 'Admin');
 
   res.status(201).json({ status: 'success', data: newCat });
 });
 
-app.put('/api/categories/:id', (req: Request, res: Response) => {
+app.put('/api/categories/:id', async (req: Request, res: Response) => {
   const categories = DB.getCategories();
   const idx = categories.findIndex(c => c.id === req.params.id);
 
   if (idx === -1) return res.status(404).json({ error: 'Kategori tidak ditemukan!' });
 
   categories[idx] = { ...categories[idx], ...req.body, id: categories[idx].id };
-  DB.saveCategories(categories);
-  DB.addLog('activity', `Memperbarui kategori: ${categories[idx].name}`, 'Admin');
+  await DB.saveCategories(categories);
+  await DB.addLog('activity', `Memperbarui kategori: ${categories[idx].name}`, 'Admin');
 
   res.json({ status: 'success', data: categories[idx] });
 });
 
-app.delete('/api/categories/:id', (req: Request, res: Response) => {
+app.delete('/api/categories/:id', async (req: Request, res: Response) => {
   let categories = DB.getCategories();
   categories = categories.filter(c => c.id !== req.params.id);
-  DB.saveCategories(categories);
-  DB.addLog('activity', `Menghapus kategori ID: ${req.params.id}`, 'Admin');
+  await DB.saveCategories(categories);
+  await DB.addLog('activity', `Menghapus kategori ID: ${req.params.id}`, 'Admin');
 
   res.json({ status: 'success', message: 'Kategori berhasil dihapus.' });
 });
@@ -506,7 +516,7 @@ app.get('/api/tags', (req: Request, res: Response) => {
   res.json({ data: tags });
 });
 
-app.post('/api/tags', (req: Request, res: Response) => {
+app.post('/api/tags', async (req: Request, res: Response) => {
   const tags = DB.getTags();
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: 'Nama tag wajib diisi!' });
@@ -522,7 +532,7 @@ app.post('/api/tags', (req: Request, res: Response) => {
     count: 1
   };
   tags.push(newTag);
-  DB.saveTags(tags);
+  await DB.saveTags(tags);
   res.status(201).json({ status: 'success', data: newTag });
 });
 
@@ -532,7 +542,7 @@ app.get('/api/pages', (req: Request, res: Response) => {
   res.json({ data: pages });
 });
 
-app.post('/api/pages', (req: Request, res: Response) => {
+app.post('/api/pages', async (req: Request, res: Response) => {
   const pages = DB.getPages();
   const { title, slug, content, meta_title, meta_description } = req.body;
 
@@ -551,28 +561,28 @@ app.post('/api/pages', (req: Request, res: Response) => {
   };
 
   pages.push(newPage);
-  DB.savePages(pages);
-  DB.addLog('activity', `Membuat halaman baru: ${title}`, 'Admin');
+  await DB.savePages(pages);
+  await DB.addLog('activity', `Membuat halaman baru: ${title}`, 'Admin');
 
   res.status(201).json({ status: 'success', data: newPage });
 });
 
-app.put('/api/pages/:id', (req: Request, res: Response) => {
+app.put('/api/pages/:id', async (req: Request, res: Response) => {
   const pages = DB.getPages();
   const idx = pages.findIndex(p => p.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Halaman tidak ditemukan!' });
 
   pages[idx] = { ...pages[idx], ...req.body, id: pages[idx].id, updated_at: new Date().toISOString() };
-  DB.savePages(pages);
-  DB.addLog('activity', `Memperbarui halaman: ${pages[idx].title}`, 'Admin');
+  await DB.savePages(pages);
+  await DB.addLog('activity', `Memperbarui halaman: ${pages[idx].title}`, 'Admin');
 
   res.json({ status: 'success', data: pages[idx] });
 });
 
-app.delete('/api/pages/:id', (req: Request, res: Response) => {
+app.delete('/api/pages/:id', async (req: Request, res: Response) => {
   let pages = DB.getPages();
   pages = pages.filter(p => p.id !== req.params.id);
-  DB.savePages(pages);
+  await DB.savePages(pages);
   res.json({ status: 'success', message: 'Halaman berhasil dihapus.' });
 });
 
@@ -582,11 +592,11 @@ app.get('/api/settings', (req: Request, res: Response) => {
   res.json({ data: settings });
 });
 
-app.put('/api/settings', (req: Request, res: Response) => {
+app.put('/api/settings', async (req: Request, res: Response) => {
   const settings = DB.getSettings();
   const updated = { ...settings, ...req.body };
-  DB.saveSettings(updated);
-  DB.addLog('activity', 'Memperbarui Pengaturan Website', 'Admin');
+  await DB.saveSettings(updated);
+  await DB.addLog('activity', 'Memperbarui Pengaturan Website', 'Admin');
   res.json({ status: 'success', data: updated });
 });
 
@@ -596,7 +606,7 @@ app.get('/api/media', (req: Request, res: Response) => {
   res.json({ data: media });
 });
 
-app.post('/api/media/upload', upload.single('file'), (req: Request, res: Response) => {
+app.post('/api/media/upload', upload.single('file'), async (req: Request, res: Response) => {
   if (!req.file) {
     return res.status(400).json({ error: 'Tidak ada berkas yang diunggah!' });
   }
@@ -619,13 +629,13 @@ app.post('/api/media/upload', upload.single('file'), (req: Request, res: Respons
   };
 
   mediaList.unshift(newMedia);
-  DB.saveMedia(mediaList);
-  DB.addLog('activity', `Mengunggah berkas media: ${req.file.originalname}`, 'Admin');
+  await DB.saveMedia(mediaList);
+  await DB.addLog('activity', `Mengunggah berkas media: ${req.file.originalname}`, 'Admin');
 
   res.status(201).json({ status: 'success', data: newMedia });
 });
 
-app.delete('/api/media/:id', (req: Request, res: Response) => {
+app.delete('/api/media/:id', async (req: Request, res: Response) => {
   let mediaList = DB.getMedia();
   const media = mediaList.find(m => m.id === req.params.id);
 
@@ -635,8 +645,8 @@ app.delete('/api/media/:id', (req: Request, res: Response) => {
       try { fs.unlinkSync(filePath); } catch (e) { console.error(e); }
     }
     mediaList = mediaList.filter(m => m.id !== req.params.id);
-    DB.saveMedia(mediaList);
-    DB.addLog('activity', `Menghapus media berkas: ${media.filename}`, 'Admin');
+    await DB.saveMedia(mediaList);
+    await DB.addLog('activity', `Menghapus media berkas: ${media.filename}`, 'Admin');
   }
 
   res.json({ status: 'success', message: 'Berkas media berhasil dihapus.' });
@@ -648,7 +658,7 @@ app.get('/api/users', (req: Request, res: Response) => {
   res.json({ data: users });
 });
 
-app.post('/api/users', (req: Request, res: Response) => {
+app.post('/api/users', async (req: Request, res: Response) => {
   const users = DB.getUsers();
   const { username, email, name, role, avatar, bio } = req.body;
 
@@ -667,8 +677,8 @@ app.post('/api/users', (req: Request, res: Response) => {
   };
 
   users.push(newUser);
-  DB.saveUsers(users);
-  DB.addLog('activity', `Menambah pengguna baru: ${name}`, 'Admin');
+  await DB.saveUsers(users);
+  await DB.addLog('activity', `Menambah pengguna baru: ${name}`, 'Admin');
 
   res.status(201).json({ status: 'success', data: newUser });
 });
@@ -680,14 +690,14 @@ app.get('/api/logs', (req: Request, res: Response) => {
 });
 
 // Cache Clear API
-app.post('/api/cache/clear', (req: Request, res: Response) => {
+app.post('/api/cache/clear', async (req: Request, res: Response) => {
   const ok = DB.clearCache();
-  DB.addLog('activity', 'Membersihkan Flat-File Cache secara manual', 'Admin');
+  await DB.addLog('activity', 'Membersihkan Flat-File Cache secara manual', 'Admin');
   res.json({ status: ok ? 'success' : 'error', message: 'Cache flat-file berhasil dibersihkan!' });
 });
 
 // Backup API
-app.post('/api/backup/create', (req: Request, res: Response) => {
+app.post('/api/backup/create', async (req: Request, res: Response) => {
   const backup = {
     timestamp: new Date().toISOString(),
     settings: DB.getSettings(),
@@ -699,23 +709,23 @@ app.post('/api/backup/create', (req: Request, res: Response) => {
     media: DB.getMedia()
   };
 
-  DB.addLog('activity', 'Membuat Backup Database JSON Single-Click', 'Admin');
+  await DB.addLog('activity', 'Membuat Backup Database JSON Single-Click', 'Admin');
   res.json({ status: 'success', data: backup });
 });
 
-app.post('/api/backup/restore', (req: Request, res: Response) => {
+app.post('/api/backup/restore', async (req: Request, res: Response) => {
   const { settings, users, categories, tags, posts, pages, media } = req.body;
   if (!posts || !categories) return res.status(400).json({ error: 'Struktur backup JSON tidak valid!' });
 
-  if (settings) DB.saveSettings(settings);
-  if (users) DB.saveUsers(users);
-  if (categories) DB.saveCategories(categories);
-  if (tags) DB.saveTags(tags);
-  if (posts) DB.savePosts(posts);
-  if (pages) DB.savePages(pages);
-  if (media) DB.saveMedia(media);
+  if (settings) await DB.saveSettings(settings);
+  if (users) await DB.saveUsers(users);
+  if (categories) await DB.saveCategories(categories);
+  if (tags) await DB.saveTags(tags);
+  if (posts) await DB.savePosts(posts);
+  if (pages) await DB.savePages(pages);
+  if (media) await DB.saveMedia(media);
 
-  DB.addLog('activity', 'Melakukan Restore Database JSON', 'Admin');
+  await DB.addLog('activity', 'Melakukan Restore Database JSON', 'Admin');
   res.json({ status: 'success', message: 'Database JSON berhasil dipulihkan total!' });
 });
 
@@ -949,10 +959,16 @@ app.get('/robots.txt', (req: Request, res: Response) => {
 });
 
 // ==========================================
-// VITE MIDDLEWARE SETUP
+// VITE MIDDLEWARE SETUP & STARTUP
 // ==========================================
 async function start() {
+  if (process.env.VERCEL) {
+    // Vercel serverless handles static files and routing via vercel.json
+    return;
+  }
+
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa'

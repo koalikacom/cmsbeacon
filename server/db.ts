@@ -82,14 +82,18 @@ function readJSON<T>(filename: string, defaultValue: T): T {
   return defaultValue;
 }
 
-function writeJSON<T>(filename: string, data: T): void {
+async function writeJSON<T>(filename: string, data: T): Promise<void> {
   ensureDirs();
   inMemoryCache[filename] = data;
 
   const key = getKeyFromFilename(filename);
 
-  // Sync asynchronously to Supabase cloud database
-  syncToSupabase(key, data).catch((err) => console.error(`[Supabase Async Error] ${key}:`, err));
+  // Sync synchronously/awaited to Supabase cloud database
+  try {
+    await syncToSupabase(key, data);
+  } catch (err) {
+    console.error(`[Supabase Sync Error] ${key}:`, err);
+  }
 
   // Try writing to /tmp/cms_data/ (always writable on Vercel/serverless)
   try {
@@ -108,6 +112,22 @@ function writeJSON<T>(filename: string, data: T): void {
   } catch {
     // Read-only filesystem on Vercel - safely ignored as data is saved in memory & /tmp & Supabase
   }
+}
+
+let isHydrated = false;
+let hydratingPromise: Promise<void> | null = null;
+
+export async function ensureHydrated(): Promise<void> {
+  if (isHydrated) return;
+  if (!hydratingPromise) {
+    hydratingPromise = hydrateFromSupabase().then(() => {
+      isHydrated = true;
+    }).catch(err => {
+      console.error('Failed to hydrate from Supabase:', err);
+      isHydrated = true;
+    });
+  }
+  await hydratingPromise;
 }
 
 // Async loader to hydrate inMemoryCache from Supabase on startup
@@ -479,49 +499,49 @@ export const DB = {
   getPosts(): ArticlePost[] {
     return readJSON<ArticlePost[]>('posts.json', []);
   },
-  savePosts(posts: ArticlePost[]): void {
-    writeJSON('posts.json', posts);
+  async savePosts(posts: ArticlePost[]): Promise<void> {
+    await writeJSON('posts.json', posts);
   },
   getCategories(): Category[] {
     return readJSON<Category[]>('categories.json', []);
   },
-  saveCategories(cats: Category[]): void {
-    writeJSON('categories.json', cats);
+  async saveCategories(cats: Category[]): Promise<void> {
+    await writeJSON('categories.json', cats);
   },
   getTags(): Tag[] {
     return readJSON<Tag[]>('tags.json', []);
   },
-  saveTags(tags: Tag[]): void {
-    writeJSON('tags.json', tags);
+  async saveTags(tags: Tag[]): Promise<void> {
+    await writeJSON('tags.json', tags);
   },
   getPages(): StaticPage[] {
     return readJSON<StaticPage[]>('pages.json', []);
   },
-  savePages(pages: StaticPage[]): void {
-    writeJSON('pages.json', pages);
+  async savePages(pages: StaticPage[]): Promise<void> {
+    await writeJSON('pages.json', pages);
   },
   getSettings(): SiteSettings {
     return readJSON<SiteSettings>('settings.json', {} as SiteSettings);
   },
-  saveSettings(settings: SiteSettings): void {
-    writeJSON('settings.json', settings);
+  async saveSettings(settings: SiteSettings): Promise<void> {
+    await writeJSON('settings.json', settings);
   },
   getUsers(): User[] {
     return readJSON<User[]>('users.json', []);
   },
-  saveUsers(users: User[]): void {
-    writeJSON('users.json', users);
+  async saveUsers(users: User[]): Promise<void> {
+    await writeJSON('users.json', users);
   },
   getMedia(): MediaFile[] {
     return readJSON<MediaFile[]>('media.json', []);
   },
-  saveMedia(media: MediaFile[]): void {
-    writeJSON('media.json', media);
+  async saveMedia(media: MediaFile[]): Promise<void> {
+    await writeJSON('media.json', media);
   },
   getLogs(): ActivityLog[] {
     return readJSON<ActivityLog[]>('logs.json', []);
   },
-  addLog(type: ActivityLog['type'], message: string, userName = 'Guest', ip = '127.0.0.1') {
+  async addLog(type: ActivityLog['type'], message: string, userName = 'Guest', ip = '127.0.0.1'): Promise<void> {
     const logs = readJSON<ActivityLog[]>('logs.json', []);
     const newLog: ActivityLog = {
       id: 'log-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
@@ -534,7 +554,7 @@ export const DB = {
     logs.unshift(newLog);
     // Keep last 200 logs
     if (logs.length > 200) logs.pop();
-    writeJSON('logs.json', logs);
+    await writeJSON('logs.json', logs);
   },
   clearCache(): boolean {
     ensureDirs();
