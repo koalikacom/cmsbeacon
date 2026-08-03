@@ -7,8 +7,11 @@ import {
   Save,
   ShieldCheck,
   Search,
-  DollarSign,
-  FileText
+  Database,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
+  Copy
 } from 'lucide-react';
 import { SiteSettings } from '../types';
 
@@ -49,7 +52,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     } as SiteSettings)
   );
 
-  const [activeTab, setActiveTab] = useState<'profile' | 'socials' | 'seo' | 'scripts' | 'api'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'socials' | 'seo' | 'scripts' | 'api' | 'database'>('profile');
+  const [supabaseStatus, setSupabaseStatus] = useState<any>(null);
+  const [loadingStatus, setLoadingStatus] = useState(false);
+  const [copiedSql, setCopiedSql] = useState(false);
+
+  const checkSupabaseStatus = async () => {
+    setLoadingStatus(true);
+    try {
+      const res = await fetch('/api/supabase/status');
+      const data = await res.json();
+      setSupabaseStatus(data);
+    } catch {
+      setSupabaseStatus({ status: 'error', message: 'Gagal terhubung ke server API.' });
+    } finally {
+      setLoadingStatus(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (activeTab === 'database') {
+      checkSupabaseStatus();
+    }
+  }, [activeTab]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,7 +110,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           { id: 'socials', label: 'Media Sosial', icon: Share2 },
           { id: 'seo', label: 'SEO & Analytics', icon: Search },
           { id: 'scripts', label: 'Custom Scripts & Robots', icon: Code2 },
-          { id: 'api', label: 'Token API & Performa', icon: ShieldCheck }
+          { id: 'api', label: 'Token API & Performa', icon: ShieldCheck },
+          { id: 'database', label: 'Database Cloud (Supabase)', icon: Database }
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -315,6 +341,82 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono"
               />
             </div>
+          </div>
+        )}
+
+        {activeTab === 'database' && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <Database className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">Status Integrasi Supabase Cloud</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Penyimpanan permanen artikel, kategori, tag, dan media untuk Vercel & GitHub.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={checkSupabaseStatus}
+                disabled={loadingStatus}
+                className="px-3.5 py-2 rounded-xl bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />
+                <span>Cek Ulang Status</span>
+              </button>
+            </div>
+
+            {supabaseStatus && (
+              <div className="space-y-4">
+                {supabaseStatus.status === 'connected' && (
+                  <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold text-sm">Supabase Terhubung & Siap Digunakan!</p>
+                      <p className="text-xs mt-1">{supabaseStatus.message}</p>
+                    </div>
+                  </div>
+                )}
+
+                {supabaseStatus.status === 'table_missing' && (
+                  <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-900 dark:text-amber-200 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                      <div>
+                        <p className="font-bold text-sm">Supabase Terhubung, Jalankan Query SQL Ini Di Dashboard Supabase:</p>
+                        <p className="text-xs mt-1 text-amber-700 dark:text-amber-300">
+                          Buka Dashboard Supabase → <b>SQL Editor</b> → Paste kode di bawah ini lalu klik <b>RUN</b>:
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="relative bg-slate-900 text-slate-100 p-4 rounded-xl font-mono text-xs overflow-x-auto">
+                      <pre>{supabaseStatus.setup_sql}</pre>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(supabaseStatus.setup_sql);
+                          setCopiedSql(true);
+                          setTimeout(() => setCopiedSql(false), 2000);
+                        }}
+                        className="absolute top-2 right-2 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs rounded-lg font-sans font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>{copiedSql ? 'Tersalin!' : 'Salin SQL'}</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {supabaseStatus.status === 'not_configured' && (
+                  <div className="p-4 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
+                    <p className="font-bold text-sm">Supabase Belum Dikonfigurasi</p>
+                    <p className="text-xs mt-1">Variabel lingkungan <code>SUPABASE_URL</code> dan <code>SUPABASE_ANON_KEY</code> belum terdeteksi.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

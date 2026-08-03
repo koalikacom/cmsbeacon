@@ -5,12 +5,14 @@ import os from 'os';
 import cors from 'cors';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
-import { DB, initSeedData } from './server/db.js';
+import { DB, initSeedData, hydrateFromSupabase } from './server/db.js';
 import { getPHPProjectFiles } from './server/php_generator.js';
 import { ArticlePost, Category, Tag, StaticPage, SiteSettings, User, MediaFile } from './src/types.js';
 
 // Initialize default JSON data if not existing
 initSeedData();
+// Hydrate data from Supabase Cloud if available
+hydrateFromSupabase().catch((err) => console.error('Error hydrating from Supabase:', err));
 
 export const app = express();
 const PORT = 3000;
@@ -90,6 +92,67 @@ app.use('/uploads', express.static(path.join(os.tmpdir(), 'cms_uploads')));
 // ==========================================
 // REST API ENDPOINTS
 // ==========================================
+
+// Supabase Connection Status
+app.get('/api/supabase/status', async (req: Request, res: Response) => {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  const isConfigured = Boolean(url && key);
+
+  if (!isConfigured) {
+    return res.json({
+      status: 'not_configured',
+      message: 'Variabel lingkungan SUPABASE_URL atau API KEY belum dikonfigurasi.',
+      configured: false
+    });
+  }
+
+  try {
+    const { getSupabaseClient } = await import('./server/supabase.js');
+    const client = getSupabaseClient();
+    if (!client) {
+      return res.json({
+        status: 'error',
+        message: 'Gagal menginisialisasi client Supabase.',
+        configured: true,
+        connected: false
+      });
+    }
+
+    // Ping check on table cms_store
+    const { data, error } = await client.from('cms_store').select('key').limit(1);
+
+    if (error && error.code === '42P01') {
+      // Table cms_store does not exist yet
+      return res.json({
+        status: 'table_missing',
+        message: 'Koneksi ke Supabase BERHASIL! Namun tabel "cms_store" belum dibuat di database Supabase Anda.',
+        configured: true,
+        connected: true,
+        setup_sql: `CREATE TABLE IF NOT EXISTS cms_store (
+  key TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);`
+      });
+    }
+
+    return res.json({
+      status: 'connected',
+      message: 'Koneksi ke Supabase Cloud Database BERHASIL dan SIAP Digunakan!',
+      configured: true,
+      connected: true,
+      data_samples_count: data ? data.length : 0
+    });
+  } catch (err: any) {
+    return res.json({
+      status: 'error',
+      message: err.message || 'Error saat menghubungkan ke Supabase.',
+      configured: true,
+      connected: false
+    });
+  }
+});
 
 // Auth Login Simulation
 app.post('/api/auth/login', (req: Request, res: Response) => {

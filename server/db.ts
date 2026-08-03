@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { syncToSupabase, fetchFromSupabase, getSupabaseClient } from './supabase.js';
 import {
   ArticlePost,
   Category,
@@ -37,6 +38,10 @@ function ensureDirs() {
   } catch {
     // Ignore read-only filesystem errors (Vercel)
   }
+}
+
+function getKeyFromFilename(filename: string): string {
+  return filename.replace('.json', '');
 }
 
 function readJSON<T>(filename: string, defaultValue: T): T {
@@ -81,6 +86,11 @@ function writeJSON<T>(filename: string, data: T): void {
   ensureDirs();
   inMemoryCache[filename] = data;
 
+  const key = getKeyFromFilename(filename);
+
+  // Sync asynchronously to Supabase cloud database
+  syncToSupabase(key, data).catch((err) => console.error(`[Supabase Async Error] ${key}:`, err));
+
   // Try writing to /tmp/cms_data/ (always writable on Vercel/serverless)
   try {
     const tmpPath = path.join(TMP_DATA_DIR, filename);
@@ -96,7 +106,32 @@ function writeJSON<T>(filename: string, data: T): void {
     fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
     fs.renameSync(tempPath, projectPath);
   } catch {
-    // Read-only filesystem on Vercel - safely ignored as data is saved in memory & /tmp
+    // Read-only filesystem on Vercel - safely ignored as data is saved in memory & /tmp & Supabase
+  }
+}
+
+// Async loader to hydrate inMemoryCache from Supabase on startup
+export async function hydrateFromSupabase(): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+
+  const keys = ['posts', 'categories', 'tags', 'pages', 'settings', 'users', 'media', 'logs'];
+  console.log('🔄 Hydrating CMS cache from Supabase Cloud...');
+
+  for (const key of keys) {
+    const filename = `${key}.json`;
+    const remoteData = await fetchFromSupabase(key);
+    if (remoteData !== null && remoteData !== undefined) {
+      inMemoryCache[filename] = remoteData;
+      console.log(`  ✓ Hydrated ${key} from Supabase (${Array.isArray(remoteData) ? remoteData.length + ' items' : 'object'})`);
+    } else {
+      // If Supabase doesn't have it yet, upload the initial seed data from memory/disk to Supabase
+      const currentVal = inMemoryCache[filename] || readJSON(filename, null);
+      if (currentVal !== null) {
+        await syncToSupabase(key, currentVal);
+        console.log(`  ↑ Seeded initial ${key} to Supabase`);
+      }
+    }
   }
 }
 
