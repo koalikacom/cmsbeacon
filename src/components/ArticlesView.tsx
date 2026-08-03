@@ -62,9 +62,9 @@ export const ArticlesView: React.FC<ArticlesViewProps> = ({
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      const matchTitle = post.title.toLowerCase().includes(q);
-      const matchSummary = post.summary.toLowerCase().includes(q);
-      const matchKeyword = post.focus_keyword && post.focus_keyword.toLowerCase().includes(q);
+      const matchTitle = (post.title || '').toLowerCase().includes(q);
+      const matchSummary = (post.summary || '').toLowerCase().includes(q);
+      const matchKeyword = (post.focus_keyword || '').toLowerCase().includes(q);
       if (!matchTitle && !matchSummary && !matchKeyword) return false;
     }
 

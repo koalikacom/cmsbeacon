@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import {
   ArticlePost,
   Category,
@@ -11,42 +12,92 @@ import {
   ActivityLog
 } from '../src/types.js';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
-const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
-const CACHE_DIR = path.join(DATA_DIR, 'cache');
-const BACKUP_DIR = path.join(DATA_DIR, 'backup');
+const PROJECT_DATA_DIR = path.join(process.cwd(), 'data');
+const DATA_DIR = PROJECT_DATA_DIR;
+const TMP_DATA_DIR = path.join(os.tmpdir(), 'cms_data');
+const CACHE_DIR = path.join(TMP_DATA_DIR, 'cache');
 
-// Ensure directories exist
+// In-Memory store cache for serverless read-only environments (e.g. Vercel)
+const inMemoryCache: Record<string, any> = {};
+
+// Ensure directories exist safely
 function ensureDirs() {
-  [DATA_DIR, UPLOADS_DIR, CACHE_DIR, BACKUP_DIR].forEach((dir) => {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+  try {
+    if (!fs.existsSync(TMP_DATA_DIR)) {
+      fs.mkdirSync(TMP_DATA_DIR, { recursive: true });
     }
-  });
+  } catch {
+    // Ignore
+  }
+
+  try {
+    if (!fs.existsSync(PROJECT_DATA_DIR)) {
+      fs.mkdirSync(PROJECT_DATA_DIR, { recursive: true });
+    }
+  } catch {
+    // Ignore read-only filesystem errors (Vercel)
+  }
 }
 
 function readJSON<T>(filename: string, defaultValue: T): T {
   ensureDirs();
-  const filePath = path.join(DATA_DIR, filename);
-  if (!fs.existsSync(filePath)) {
-    writeJSON(filename, defaultValue);
-    return defaultValue;
+
+  // 1. Check in-memory cache first if already loaded
+  if (inMemoryCache[filename] !== undefined) {
+    return inMemoryCache[filename] as T;
   }
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(content) as T;
-  } catch (err) {
-    console.error(`Error reading ${filename}:`, err);
-    return defaultValue;
+
+  // 2. Check /tmp/cms_data/
+  const tmpPath = path.join(TMP_DATA_DIR, filename);
+  if (fs.existsSync(tmpPath)) {
+    try {
+      const content = fs.readFileSync(tmpPath, 'utf-8');
+      const data = JSON.parse(content) as T;
+      inMemoryCache[filename] = data;
+      return data;
+    } catch (err) {
+      console.error(`Error reading /tmp/${filename}:`, err);
+    }
   }
+
+  // 3. Check project data directory
+  const projectPath = path.join(PROJECT_DATA_DIR, filename);
+  if (fs.existsSync(projectPath)) {
+    try {
+      const content = fs.readFileSync(projectPath, 'utf-8');
+      const data = JSON.parse(content) as T;
+      inMemoryCache[filename] = data;
+      return data;
+    } catch (err) {
+      console.error(`Error reading ${filename}:`, err);
+    }
+  }
+
+  inMemoryCache[filename] = defaultValue;
+  return defaultValue;
 }
 
 function writeJSON<T>(filename: string, data: T): void {
   ensureDirs();
-  const filePath = path.join(DATA_DIR, filename);
-  const tempPath = `${filePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tempPath, filePath);
+  inMemoryCache[filename] = data;
+
+  // Try writing to /tmp/cms_data/ (always writable on Vercel/serverless)
+  try {
+    const tmpPath = path.join(TMP_DATA_DIR, filename);
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+  } catch (err) {
+    console.error(`Failed to write to /tmp/${filename}:`, err);
+  }
+
+  // Try writing to project data directory (for local development persistence)
+  try {
+    const projectPath = path.join(PROJECT_DATA_DIR, filename);
+    const tempPath = `${projectPath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tempPath, projectPath);
+  } catch {
+    // Read-only filesystem on Vercel - safely ignored as data is saved in memory & /tmp
+  }
 }
 
 // Initial Seed Data Generator

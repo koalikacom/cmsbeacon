@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import cors from 'cors';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
@@ -16,8 +17,8 @@ const PORT = 3000;
 
 // Middleware
 app.use(cors({ origin: '*', credentials: true }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // Set Security & Open Embed Headers for Iframe & External Cross-Origin requests
 app.use((req, res, next) => {
@@ -35,17 +36,31 @@ app.use((req, res, next) => {
   next();
 });
 
-// Configure Multer for File Uploads
+// Configure Multer for File Uploads (Safe for Vercel Serverless / Read-Only Filesystems)
+const getUploadDir = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  
+  const projectDir = path.join(process.cwd(), 'uploads', `${year}`, `${month}`);
+  try {
+    if (!fs.existsSync(projectDir)) {
+      fs.mkdirSync(projectDir, { recursive: true });
+    }
+    return projectDir;
+  } catch {
+    // Read-only filesystem in Vercel - Fallback to /tmp/cms_uploads
+    const tmpDir = path.join(os.tmpdir(), 'cms_uploads', `${year}`, `${month}`);
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    return tmpDir;
+  }
+};
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const folderPath = path.join(process.cwd(), 'uploads', `${year}`, `${month}`);
-    if (!fs.existsSync(folderPath)) {
-      fs.mkdirSync(folderPath, { recursive: true });
-    }
-    cb(null, folderPath);
+    cb(null, getUploadDir());
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
@@ -68,8 +83,9 @@ const upload = multer({
   }
 });
 
-// Serve Uploaded Files statically
+// Serve Uploaded Files statically from both project and /tmp
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+app.use('/uploads', express.static(path.join(os.tmpdir(), 'cms_uploads')));
 
 // ==========================================
 // REST API ENDPOINTS
@@ -142,9 +158,7 @@ app.get('/api/posts', (req: Request, res: Response) => {
 
   const { status, category, tag, search, include_deleted, sort, limit, page } = req.query;
 
-  if (include_deleted === 'true') {
-    posts = posts.filter(p => p.is_deleted);
-  } else {
+  if (include_deleted !== 'true') {
     posts = posts.filter(p => !p.is_deleted);
   }
 
